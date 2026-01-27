@@ -236,9 +236,24 @@ void keyDownExecHook(EAGLView* self, SEL sel, NSEvent* event) {
     double timestamp = [event timestamp];
     bool isRepeat = [event isARepeat];
     bool isDown = true;
+    NSEventModifierFlags flags = [event modifierFlags];
+
+    KeyboardInputEvent::Modifiers modifiers;
+    if ((flags & NSEventModifierFlagShift) != 0) {
+        modifiers |= KeyboardInputEvent::Mods_Shift;
+    }
+    if ((flags & NSEventModifierFlagControl) != 0) {
+        modifiers |= KeyboardInputEvent::Mods_Control;
+    }
+    if ((flags & NSEventModifierFlagOption) != 0) {
+        modifiers |= KeyboardInputEvent::Mods_Alt;
+    }
+    if ((flags & NSEventModifierFlagCommand) != 0) {
+        modifiers |= KeyboardInputEvent::Mods_Super;
+    }
 
     KeyboardInputEvent inputEvent(
-        keyCode, isRepeat ? KeyboardInputEvent::Action::Press : KeyboardInputEvent::Action::Repeat, { nativeCode }, timestamp
+        keyCode, isRepeat ? KeyboardInputEvent::Action::Press : KeyboardInputEvent::Action::Repeat, { nativeCode }, timestamp, modifiers
     );
 
     if (inputEvent.post() != ListenerResult::Propagate) return;
@@ -246,17 +261,17 @@ void keyDownExecHook(EAGLView* self, SEL sel, NSEvent* event) {
     isDown = inputEvent.action != KeyboardInputEvent::Action::Release;
     isRepeat = inputEvent.action == KeyboardInputEvent::Action::Repeat;
     keyCode = inputEvent.key;
+    modifiers = inputEvent.modifiers;
 
     if (keyCode != KEY_Unknown && (!imeDispatcher->hasDelegate() || keyCode == KEY_Escape || keyCode == KEY_Enter)) {
         keyboardDispatcher->dispatchKeyboardMSG(keyCode, isDown, isRepeat, timestamp);
     }
 
-    NSEventModifierFlags flags = [event modifierFlags];
     keyboardDispatcher->updateModifierKeys(
-        (flags & NSEventModifierFlagShift) != 0,
-        (flags & NSEventModifierFlagControl) != 0,
-        (flags & NSEventModifierFlagOption) != 0,
-        (flags & NSEventModifierFlagCommand) != 0
+        (modifiers & KeyboardInputEvent::Mods_Shift) != KeyboardInputEvent::Mods_None,
+        (modifiers & KeyboardInputEvent::Mods_Control) != KeyboardInputEvent::Mods_None,
+        (modifiers & KeyboardInputEvent::Mods_Alt) != KeyboardInputEvent::Mods_None,
+        (modifiers & KeyboardInputEvent::Mods_Super) != KeyboardInputEvent::Mods_None
     );
 
     NSString* characters = [event charactersIgnoringModifiers];
@@ -265,7 +280,7 @@ void keyDownExecHook(EAGLView* self, SEL sel, NSEvent* event) {
         if (character == NSDeleteFunctionKey || character == 0x7f) {
             imeDispatcher->dispatchDeleteBackward();
         }
-        else if (nativeCode == kVK_ANSI_V && (flags & NSEventModifierFlagCommand) != 0) {
+        else if (keyCode == KEY_V && (modifiers & KeyboardInputEvent::Mods_Super) != KeyboardInputEvent::Mods_None) {
             NSString* str = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
             if (![str isEqualToString:NSPasteboardTypeString]) {
                 for (size_t i = 0; i < [str length]; i++) {
@@ -289,9 +304,24 @@ void keyUpExecHook(EAGLView* self, SEL sel, NSEvent* event) {
     double timestamp = [event timestamp];
     bool isRepeat = false;
     bool isDown = false;
+    NSEventModifierFlags flags = [event modifierFlags];
+
+    KeyboardInputEvent::Modifiers modifiers;
+    if ((flags & NSEventModifierFlagShift) != 0) {
+        modifiers |= KeyboardInputEvent::Mods_Shift;
+    }
+    if ((flags & NSEventModifierFlagControl) != 0) {
+        modifiers |= KeyboardInputEvent::Mods_Control;
+    }
+    if ((flags & NSEventModifierFlagOption) != 0) {
+        modifiers |= KeyboardInputEvent::Mods_Alt;
+    }
+    if ((flags & NSEventModifierFlagCommand) != 0) {
+        modifiers |= KeyboardInputEvent::Mods_Super;
+    }
 
     KeyboardInputEvent inputEvent(
-        keyCode, KeyboardInputEvent::Action::Release, { nativeCode }, timestamp
+        keyCode, KeyboardInputEvent::Action::Release, { nativeCode }, timestamp, modifiers
     );
 
     if (inputEvent.post() != ListenerResult::Propagate) return;
@@ -299,24 +329,18 @@ void keyUpExecHook(EAGLView* self, SEL sel, NSEvent* event) {
     isDown = inputEvent.action != KeyboardInputEvent::Action::Release;
     isRepeat = inputEvent.action == KeyboardInputEvent::Action::Repeat;
     keyCode = inputEvent.key;
+    modifiers = inputEvent.modifiers;
 
     if (keyCode != KEY_Unknown && (!imeDispatcher->hasDelegate() || keyCode == KEY_Escape || keyCode == KEY_Enter)) {
         keyboardDispatcher->dispatchKeyboardMSG(keyCode, isDown, isRepeat, timestamp);
     }
 
-    NSEventModifierFlags flags = [event modifierFlags];
     keyboardDispatcher->updateModifierKeys(
-        (flags & NSEventModifierFlagShift) != 0,
-        (flags & NSEventModifierFlagControl) != 0,
-        (flags & NSEventModifierFlagOption) != 0,
-        (flags & NSEventModifierFlagCommand) != 0
+        (modifiers & KeyboardInputEvent::Mods_Shift) != KeyboardInputEvent::Mods_None,
+        (modifiers & KeyboardInputEvent::Mods_Control) != KeyboardInputEvent::Mods_None,
+        (modifiers & KeyboardInputEvent::Mods_Alt) != KeyboardInputEvent::Mods_None,
+        (modifiers & KeyboardInputEvent::Mods_Super) != KeyboardInputEvent::Mods_None
     );
-}
-
-void flagsChangedExecHook(EAGLView* self, SEL sel, NSEvent* event) {
-    // todo: modifier key events
-
-    [self performSelector:sel withObject:event];
 }
 
 void mouseDownExecHook(EAGLView* self, SEL sel, NSEvent* event) {
@@ -436,7 +460,6 @@ void hookObjcMethod(const char* className, const char* methodName, Func newImp) 
 $execute {
     hookObjcMethod("EAGLView", "keyDownExec:", &keyDownExecHook);
     hookObjcMethod("EAGLView", "keyUpExec:", &keyUpExecHook);
-    hookObjcMethod("EAGLView", "flagsChangedExec:", &flagsChangedExecHook);
     hookObjcMethod("EAGLView", "mouseDownExec:", &mouseDownExecHook);
     hookObjcMethod("EAGLView", "mouseMovedExec:", &mouseMovedExecHook);
     hookObjcMethod("EAGLView", "mouseDraggedExec:", &mouseDraggedExecHook);
