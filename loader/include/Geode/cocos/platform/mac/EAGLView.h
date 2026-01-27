@@ -79,10 +79,13 @@ THE SOFTWARE.
     NSView          *superViewGLView_;
     NSRect          originalWinRect_; // Original size and position
 
-    @public float   frameZoomFactor_;
-	@public float   _backingScaleFactor;
-	@public float   _mouseX;
-	@public float   _mouseY;
+    float           frameZoomFactor_;
+	// @note RobTop Addition
+	float           _backingScaleFactor;
+	// @note RobTop Addition
+	float           _mouseX;
+	// @note RobTop Addition
+	float           _mouseY;
 }
 
 @property (nonatomic, readwrite, assign) id<MacEventDelegate> eventDelegate;
@@ -116,6 +119,11 @@ THE SOFTWARE.
 -(void) swapBuffers;
 
 -(void) setFullScreen:(BOOL)fullscreen;
+
+// @note RobTop Addition
+- (float)getBackingFactor;
+// @note RobTop Addition
+- (float)setBackingScaleFactor:(float)scaleFactor;
 
 @end
 #endif // __EAGLVIEW_MAC_H__

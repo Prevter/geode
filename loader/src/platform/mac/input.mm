@@ -238,7 +238,7 @@ void keyDownExecHook(EAGLView* self, SEL sel, NSEvent* event) {
     bool isDown = true;
     NSEventModifierFlags flags = [event modifierFlags];
 
-    KeyboardInputEvent::Modifiers modifiers;
+    KeyboardInputEvent::Modifiers modifiers = KeyboardInputEvent::Mods_None;
     if ((flags & NSEventModifierFlagShift) != 0) {
         modifiers |= KeyboardInputEvent::Mods_Shift;
     }
@@ -352,9 +352,12 @@ void mouseDownExecHook(EAGLView* self, SEL sel, NSEvent* event) {
 
     if (inputEvent.post() != ListenerResult::Propagate) return;
 
+    NSPoint point = [self convertPoint:[event locationInWindow] fromView:nil];
     int eventNumber = [event eventNumber];
-    float mouseX = (self->_mouseX / self->frameZoomFactor_) / self->_backingScaleFactor;
-    float mouseY = (self->_mouseY / self->frameZoomFactor_) / self->_backingScaleFactor;
+    float frameZoomFactor = [self frameZoomFactor];
+    float backingScaleFactor = [self getBackingFactor];
+    float mouseX = (point.x / frameZoomFactor) / backingScaleFactor;
+    float mouseY = (([self getHeight] - point.y) / frameZoomFactor) / backingScaleFactor;
     CCEGLView* eglView = CCEGLView::get();
     if (inputEvent.action == MouseInputEvent::Action::Press) {
         eglView->handleTouchesBegin(1, &eventNumber, &mouseX, &mouseY, timestamp);
@@ -388,9 +391,12 @@ void mouseUpExecHook(EAGLView* self, SEL sel, NSEvent* event) {
 
     if (inputEvent.post() != ListenerResult::Propagate) return;
 
+    NSPoint point = [self convertPoint:[event locationInWindow] fromView:nil];
     int eventNumber = [event eventNumber];
-    float mouseX = (self->_mouseX / self->frameZoomFactor_) / self->_backingScaleFactor;
-    float mouseY = (self->_mouseY / self->frameZoomFactor_) / self->_backingScaleFactor;
+    float frameZoomFactor = [self frameZoomFactor];
+    float backingScaleFactor = [self getBackingFactor];
+    float mouseX = (point.x / frameZoomFactor) / backingScaleFactor;
+    float mouseY = (([self getHeight] - point.y) / frameZoomFactor) / backingScaleFactor;
     CCEGLView* eglView = CCEGLView::get();
     if (inputEvent.action == MouseInputEvent::Action::Press) {
         eglView->handleTouchesBegin(1, &eventNumber, &mouseX, &mouseY, timestamp);
