@@ -79,7 +79,10 @@ THE SOFTWARE.
     NSView          *superViewGLView_;
     NSRect          originalWinRect_; // Original size and position
 
-    float           frameZoomFactor_;
+    @public float   frameZoomFactor_;
+	@public float   _backingScaleFactor;
+	@public float   _mouseX;
+	@public float   _mouseY;
 }
 
 @property (nonatomic, readwrite, assign) id<MacEventDelegate> eventDelegate;
