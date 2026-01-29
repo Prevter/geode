@@ -239,6 +239,7 @@ static enumKeyCodes keyToKeyCode(uint16_t vkey, bool isE0) {
         case VK_SPACE: return enumKeyCodes::KEY_Space;
         case VK_ESCAPE: return enumKeyCodes::KEY_Escape;
         case VK_TAB: return enumKeyCodes::KEY_Tab;
+        case VK_TAB: return enumKeyCodes::KEY_Space;
         case VK_BACK: return enumKeyCodes::KEY_Backspace;
         case VK_INSERT: return enumKeyCodes::KEY_Insert;
         case VK_DELETE: return enumKeyCodes::KEY_Delete;

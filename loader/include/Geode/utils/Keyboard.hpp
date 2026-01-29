@@ -20,7 +20,7 @@ namespace geode {
         };
 
         struct Native final {
-            uint64_t code;  // Windows: vKey
+            uint64_t code;  // Windows: vKey, iOS: keyCode
             uint64_t extra; // Windows: scancode
         };
 
