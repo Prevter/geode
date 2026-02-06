@@ -17,7 +17,7 @@ struct RawInputEvent {
             uint16_t vkey;
             uint16_t scanCode;
             uint16_t flags;
-            KeyboardInputEvent::Modifiers mods;
+            KeyboardInputData::Modifiers mods;
             bool isE0;
             bool isE1;
             bool isRepeat;
@@ -50,7 +50,7 @@ struct RawInputEvent {
     }
 
     static RawInputEvent makeKeyboard(
-        bool isDown, uint16_t vk, uint16_t scan, uint16_t flags, bool isRepeat, KeyboardInputEvent::Modifiers mods
+        bool isDown, uint16_t vk, uint16_t scan, uint16_t flags, bool isRepeat, KeyboardInputData::Modifiers mods
     ) {
         RawInputEvent evt;
         evt.type = isDown ? Type::KeyDown : Type::KeyUp;
@@ -76,7 +76,7 @@ struct RawInputEvent {
 
 class RawInputQueue {
 private:
-    std::queue<RawInputEvent> m_queue;
+    std::deque<RawInputEvent> m_queue;
     mutable std::mutex m_mutex;
 
 public:
@@ -87,7 +87,7 @@ public:
 
     void push(RawInputEvent const& event) {
         std::lock_guard lock(m_mutex);
-        m_queue.push(event);
+        m_queue.push_back(event);
     }
 
     bool pop(RawInputEvent& event) {
@@ -96,15 +96,20 @@ public:
             return false;
         }
         event = m_queue.front();
-        m_queue.pop();
+        m_queue.pop_front();
         return true;
+    }
+
+    void clear() {
+        std::lock_guard lock(m_mutex);
+        m_queue.clear();
     }
 };
 
 class KeyStateTracker {
 private:
     std::unordered_map<uint32_t, bool> m_keyStates;
-    KeyboardInputEvent::Modifiers m_currentMods = KeyboardInputEvent::Mods_None;
+    KeyboardInputData::Modifiers m_currentMods = KeyboardInputData::Mods_None;
 
     static uint32_t makeKey(uint16_t vkey, uint16_t scanCode, bool isE0) {
         return (static_cast<uint32_t>(vkey) << 16) | (static_cast<uint32_t>(scanCode) << 1) |
@@ -117,7 +122,7 @@ public:
         return instance;
     }
 
-    KeyboardInputEvent::Modifiers getMods() const {
+    KeyboardInputData::Modifiers getMods() const {
         return m_currentMods;
     }
 
@@ -130,7 +135,7 @@ public:
             wasDown = it->second;
         }
 
-        auto applyMods = [&](KeyboardInputEvent::Modifiers mod) {
+        auto applyMods = [&](KeyboardInputData::Modifiers mod) {
             if (isDown) m_currentMods |= mod;
             else m_currentMods &= ~mod;
         };
@@ -139,21 +144,21 @@ public:
             case VK_LSHIFT:
             case VK_RSHIFT:
             case VK_SHIFT:
-                applyMods(KeyboardInputEvent::Mods_Shift);
+                applyMods(KeyboardInputData::Mods_Shift);
                 break;
             case VK_LCONTROL:
             case VK_RCONTROL:
             case VK_CONTROL:
-                applyMods(KeyboardInputEvent::Mods_Control);
+                applyMods(KeyboardInputData::Mods_Control);
                 break;
             case VK_LMENU:
             case VK_RMENU:
             case VK_MENU:
-                applyMods(KeyboardInputEvent::Mods_Alt);
+                applyMods(KeyboardInputData::Mods_Alt);
                 break;
             case VK_LWIN:
             case VK_RWIN:
-                applyMods(KeyboardInputEvent::Mods_Super);
+                applyMods(KeyboardInputData::Mods_Super);
                 break;
             default: break;
         }
@@ -272,6 +277,7 @@ static enumKeyCodes keyToKeyCode(uint16_t vkey, bool isE0) {
         case VK_OEM_7: return enumKeyCodes::KEY_Apostrophe;
         case VK_OEM_2: return enumKeyCodes::KEY_Slash;
         case VK_OEM_PLUS: return enumKeyCodes::KEY_OEMEqual;
+        case VK_OEM_MINUS: return enumKeyCodes::KEY_OEMMinus;
         case VK_OEM_4: return enumKeyCodes::KEY_LeftBracket;
         case VK_OEM_5: return enumKeyCodes::KEY_Backslash;
         case VK_OEM_6: return enumKeyCodes::KEY_RightBracket;
@@ -300,8 +306,39 @@ static enumKeyCodes keyToKeyCode(uint16_t vkey, bool isE0) {
     }
 }
 
+// Some devices map F13-F24 to extended scan codes (e.g. Logitech mouse/keyboard macros)
+static uint16_t scanCodeToExtendedFKey(uint16_t scanCode) {
+    switch (scanCode) {
+        case 0x64: case 0xB7: return VK_F13;
+        case 0x65: case 0xB8: return VK_F14;
+        case 0x66: case 0xB9: return VK_F15;
+        case 0x67: case 0xBA: return VK_F16;
+        case 0x68: case 0xBB: return VK_F17;
+        case 0x69: case 0xBC: return VK_F18;
+        case 0x6A: case 0xBD: return VK_F19;
+        case 0x6B: case 0xBE: return VK_F20;
+        case 0x6C: case 0xBF: return VK_F21;
+        case 0x6D: case 0xC0: return VK_F22;
+        case 0x6E: case 0xC1: return VK_F23;
+        case 0x6F: case 0xC2: return VK_F24;
+        default: return 0;
+    }
+}
+
 static uint16_t getActualVKey(uint16_t vkey, uint16_t scanCode, uint16_t flags) {
     bool isE0 = (flags & RI_KEY_E0) != 0;
+
+    // Remap vkey if it's 0 or 255 (unknown)
+    if (vkey == 0 || vkey == 255) {
+        UINT mappedScanCode = scanCode;
+        if (isE0) {
+            mappedScanCode |= 0xE000;
+        }
+        vkey = static_cast<uint16_t>(MapVirtualKeyEx(mappedScanCode, MAPVK_VSC_TO_VK_EX, GetKeyboardLayout(0)));
+        if (vkey == 0) {
+            vkey = scanCodeToExtendedFKey(scanCode);
+        }
+    }
 
     switch (vkey) {
         default: return vkey;
@@ -317,31 +354,22 @@ LRESULT CALLBACK GeodeRawInputWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
         return CallWindowProcW(g_originalRawInputProc, hwnd, msg, wParam, lParam);
     }
 
-    if (GetForegroundWindow() != g_mainWindowHWND) {
+    alignas(RAWINPUT) std::array<BYTE, sizeof(RAWINPUT)> buffer;
+    UINT rawInputSize = buffer.size();
+
+    auto result = GetRawInputData(
+        reinterpret_cast<HRAWINPUT>(lParam),
+        RID_INPUT,
+        buffer.data(),
+        &rawInputSize,
+        sizeof(RAWINPUTHEADER)
+    );
+
+    if (result == static_cast<UINT>(-1) || rawInputSize == 0) {
         return 0;
     }
 
-    UINT rawInputSize = 0;
-    GetRawInputData(
-        reinterpret_cast<HRAWINPUT>(lParam),
-        RID_INPUT,
-        nullptr,
-        &rawInputSize,
-        sizeof(RAWINPUTHEADER)
-    );
-
-    static std::vector<BYTE> rawInputData;
-    rawInputData.reserve(rawInputSize);
-
-    GetRawInputData(
-        reinterpret_cast<HRAWINPUT>(lParam),
-        RID_INPUT,
-        rawInputData.data(),
-        &rawInputSize,
-        sizeof(RAWINPUTHEADER)
-    );
-
-    RAWINPUT* raw = reinterpret_cast<RAWINPUT*>(rawInputData.data());
+    RAWINPUT* raw = reinterpret_cast<RAWINPUT*>(buffer.data());
     if (raw->header.dwType == RIM_TYPEKEYBOARD) {
         auto const& kb = raw->data.keyboard;
         bool isDown = !(kb.Flags & RI_KEY_BREAK);
@@ -375,8 +403,12 @@ LRESULT CALLBACK GeodeRawInputWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
     return 0;
 }
 
-class $modify(cocos2d::CCEGLView) {
+struct GeodeRawInput : Modify<GeodeRawInput, CCEGLView> {
     void pumpRawInput() {
+        if (GetForegroundWindow() != g_mainWindowHWND) {
+            RawInputQueue::get().clear();
+        }
+
         // update mouse position
         POINT p;
         GetCursorPos(&p);
@@ -396,7 +428,7 @@ class $modify(cocos2d::CCEGLView) {
             switch (evt.type) {
                 case RawInputEvent::Type::KeyDown:
                 case RawInputEvent::Type::KeyUp: {
-                    using enum KeyboardInputEvent::Action;
+                    using enum KeyboardInputData::Action;
                     bool isDown = evt.type == RawInputEvent::Type::KeyDown;
 
                     enumKeyCodes keyCode = keyToKeyCode(
@@ -404,7 +436,7 @@ class $modify(cocos2d::CCEGLView) {
                         evt.keyboard.isE0
                     );
 
-                    KeyboardInputEvent event(
+                    KeyboardInputData data(
                         keyCode,
                         isDown ? (evt.keyboard.isRepeat ? Repeat : Press) : Release,
                         {evt.keyboard.vkey, evt.keyboard.scanCode},
@@ -412,14 +444,13 @@ class $modify(cocos2d::CCEGLView) {
                         evt.keyboard.mods
                     );
 
-                    // copy values from event, if someone modifies it
-                    isDown = event.action != Release;
-                    evt.keyboard.isRepeat = event.action == Repeat;
-                    keyCode = event.key;
-                    evt.keyboard.mods = event.modifiers;
+                    auto result = KeyboardInputEvent(keyCode).send(data);
 
-                    auto result = event.post();
-                    if (result == ListenerResult::Propagate) {
+                    // copy values from event, if someone modifies it
+                    isDown = data.action != Release;
+                    keyCode = data.key;
+
+                    if (result == ListenerResult::Propagate && keyCode != KEY_Unknown) {
                         auto* ime = CCIMEDispatcher::sharedDispatcher();
                         if (keyCode == enumKeyCodes::KEY_Backspace && isDown) {
                             ime->dispatchDeleteBackward();
@@ -427,15 +458,26 @@ class $modify(cocos2d::CCEGLView) {
                             ime->dispatchDeleteForward();
                         }
 
-                        CCKeyboardDispatcher::get()->dispatchKeyboardMSG(
-                            keyCode,
-                            isDown,
-                            evt.keyboard.isRepeat,
-                            event.timestamp
+                        auto* keyboardDispatcher = CCKeyboardDispatcher::get();
+
+                        keyboardDispatcher->updateModifierKeys(
+                            data.modifiers & KeyboardInputData::Mods_Shift,
+                            data.modifiers & KeyboardInputData::Mods_Control,
+                            data.modifiers & KeyboardInputData::Mods_Alt,
+                            data.modifiers & KeyboardInputData::Mods_Super
                         );
 
+                        if (!ime->hasDelegate() || keyCode == KEY_Escape || keyCode == KEY_Enter) {
+                            keyboardDispatcher->dispatchKeyboardMSG(
+                                keyCode,
+                                isDown,
+                                data.action == Repeat,
+                                data.timestamp
+                            );
+                        }
+
                         // text pasting
-                        if (evt.keyboard.mods & KeyboardInputEvent::Mods_Control && keyCode == enumKeyCodes::KEY_V && isDown) {
+                        if (data.modifiers & KeyboardInputData::Mods_Control && keyCode == enumKeyCodes::KEY_V && isDown) {
                             if (ime->hasDelegate()) {
                                 this->performSafeClipboardPaste();
                             }
@@ -444,12 +486,12 @@ class $modify(cocos2d::CCEGLView) {
                     break;
                 }
                 case RawInputEvent::Type::MouseButton: {
-                    using enum MouseInputEvent::Action;
-                    using enum MouseInputEvent::Button;
+                    using enum MouseInputData::Action;
+                    using enum MouseInputData::Button;
 
                     struct Btn {
                         USHORT down, up;
-                        MouseInputEvent::Button btn;
+                        MouseInputData::Button btn;
                     };
 
                     constexpr Btn btns[] = {
@@ -465,17 +507,17 @@ class $modify(cocos2d::CCEGLView) {
                         bool isDown = (evt.mouse.flags & b.down) != 0;
                         bool isUp = (evt.mouse.flags & b.up) != 0;
                         if (isDown || isUp) {
-                            MouseInputEvent event(
+                            MouseInputData data(
                                 b.btn,
                                 isDown ? Press : Release,
                                 evt.timestamp
                             );
 
-                            auto result = event.post();
-                            isDown = event.action == Press;
+                            auto result = MouseInputEvent().send(data);
+                            isDown = data.action == Press;
 
                             // handle cocos touches
-                            if (event.button == Left && result == ListenerResult::Propagate) {
+                            if (data.button == Left && result == ListenerResult::Propagate) {
                                 int id = 0;
                                 if (isDown) {
                                     m_bCaptured = true;
@@ -483,7 +525,7 @@ class $modify(cocos2d::CCEGLView) {
                                         1, &id,
                                         &m_fMouseX,
                                         &m_fMouseY,
-                                        event.timestamp
+                                        data.timestamp
                                     );
                                 } else {
                                     m_bCaptured = false;
@@ -491,7 +533,7 @@ class $modify(cocos2d::CCEGLView) {
                                         1, &id,
                                         &m_fMouseX,
                                         &m_fMouseY,
-                                        event.timestamp
+                                        data.timestamp
                                     );
                                 }
                             }
@@ -505,7 +547,7 @@ class $modify(cocos2d::CCEGLView) {
         }
 
         if (moved) {
-            if (MouseMoveEvent(p.x, p.y).post() == ListenerResult::Stop || !m_bCaptured) {
+            if (MouseMoveEvent().send(p.x, p.y) == ListenerResult::Stop || !m_bCaptured) {
                 return;
             }
 
@@ -520,10 +562,40 @@ class $modify(cocos2d::CCEGLView) {
     }
 };
 
+class DummyEGLView : public CCEGLView {
+public:
+    void onGLFWMouseScrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+        CCEGLView::onGLFWMouseScrollCallback(window, xoffset, yoffset);
+    }
+
+    void onGLFWCharCallback(GLFWwindow* window, unsigned int c) {
+        CCEGLView::onGLFWCharCallback(window, c);
+    }
+};
+
+static void GLFWScrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+    if (ScrollWheelEvent().send(xoffset, yoffset) == ListenerResult::Stop) {
+        return;
+    }
+    static_cast<DummyEGLView*>(CCEGLView::get())->onGLFWMouseScrollCallback(window, xoffset, yoffset);
+}
+
+static void GLFWCharCallback(GLFWwindow* window, unsigned int c) {
+    static_cast<DummyEGLView*>(CCEGLView::get())->onGLFWCharCallback(window, c);
+}
+
 $execute {
     queueInMainThread([] {
         g_rawInputHWND = FindWindowW(L"GD_RawInput", nullptr);
         g_mainWindowHWND = WindowFromDC(wglGetCurrentDC());
+
+        auto window = CCEGLView::get()->m_pMainWindow;
+        auto** glfwScrollCallbackPtr = reinterpret_cast<GLFWscrollfun*>(reinterpret_cast<uintptr_t>(window) + 0x340);
+        *glfwScrollCallbackPtr = &GLFWScrollCallback;
+
+        auto** glfwCharCallbackPtr = reinterpret_cast<GLFWcharfun*>(reinterpret_cast<uintptr_t>(window) + 0x350);
+        *glfwCharCallbackPtr = &GLFWCharCallback;
+
         g_originalRawInputProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
             g_rawInputHWND, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(GeodeRawInputWndProc)
         ));

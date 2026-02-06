@@ -8,27 +8,25 @@
 #include <Geode/loader/Log.hpp>
 #include <Geode/loader/Mod.hpp>
 #include <Geode/utils/JsonValidation.hpp>
+#include <Geode/utils/async.hpp>
 #include <loader/LogImpl.hpp>
-
-#include <array>
 
 using namespace geode::prelude;
 
 #include "load.hpp"
 
 $on_mod(Loaded) {
-    ipc::listen("ipc-test", [](ipc::IPCEvent* event) -> matjson::Value {
+    ipc::listen("ipc-test", [](matjson::Value data) -> matjson::Value {
         return "Hello from Geode!";
     });
 
-    ipc::listen("loader-info", [](ipc::IPCEvent* event) -> matjson::Value {
+    ipc::listen("loader-info", [](matjson::Value data) -> matjson::Value {
         return Mod::get()->getMetadata();
     });
 
-    ipc::listen("list-mods", [](ipc::IPCEvent* event) -> matjson::Value {
+    ipc::listen("list-mods", [](matjson::Value args) -> matjson::Value {
         std::vector<matjson::Value> res;
 
-        auto args = *event->messageData;
         auto root = checkJson(args, "[ipc/list-mods]");
 
         auto includeRunTimeInfo = root.has("include-runtime-info").get<bool>();
@@ -161,6 +159,11 @@ int geodeEntry(void* platformData) {
     // Logging before this point does store the log, and everything gets logged in this setup call
     log::Logger::get()->setup();
 
+    // download bindings
+#ifndef GEODE_IS_ANDROID
+    crashlog::updateFunctionBindings();
+#endif
+
     // set up loader, load mods, etc.
     log::info("Setting up loader");
     {
@@ -186,12 +189,11 @@ int geodeEntry(void* platformData) {
 
     // 0 means no deletion
     if (logMaxAge > 0) {
-        // put it in a thread so that it doesn't slow down launch times
-        std::thread([logMaxAge] {
+        // put it in a task so that it doesn't slow down launch times
+        async::runtime().spawnBlocking<void>([logMaxAge] {
             log::Logger::get()->deleteOldLogs(std::chrono::days{logMaxAge});
-        }).detach();
+        });
     }
-
 
     log::debug("Setting up IPC");
     {

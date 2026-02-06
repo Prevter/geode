@@ -6,6 +6,7 @@
 #include "LogImpl.hpp"
 #include "console.hpp"
 
+#include <Geode/loader/Event.hpp>
 #include <Geode/loader/Dirs.hpp>
 #include <Geode/loader/IPC.hpp>
 #include <Geode/loader/Loader.hpp>
@@ -34,6 +35,11 @@
 #include <Geode/ui/Popup.hpp>
 
 using namespace geode::prelude;
+
+comm::EventCenter* geode::comm::EventCenter::get() {
+    static EventCenter instance;
+    return &instance;
+}
 
 Loader::Impl* LoaderImpl::get() {
     return Loader::get()->m_impl.get();
@@ -64,10 +70,10 @@ void Loader::Impl::removeDirectories() {
     log::debug("Removing unnecessary directories");
     // clean up of stale data from Geode v2
     if(std::filesystem::exists(dirs::getGeodeDir() / "index")) {
-        std::thread([] {
+        async::runtime().spawnBlocking<void>([] {
             std::error_code ec;
             std::filesystem::remove_all(dirs::getGeodeDir() / "index", ec);
-        }).detach();
+        });
     }
 }
 
@@ -138,7 +144,7 @@ Result<> Loader::Impl::setup() {
 
     // Trigger on_mod(Loaded) for the internal mod
     // this function is already on the gd thread, so this should be fine
-    ModStateEvent(Mod::get(), ModEventType::Loaded).post();
+    ModStateEvent(ModEventType::Loaded, Mod::get()).send();
 
     log::info("Refreshing mod graph");
     this->refreshModGraph();
@@ -311,19 +317,7 @@ void Loader::Impl::queueMods(std::vector<ModMetadata>& modQueue) {
             log::debug("Found {}", entry.path().filename());
             log::NestScope nest;
 
-            auto res = ModMetadata::createFromGeodeFile(entry.path());
-            if (!res) {
-                log::error("Failed to queue: {}", res.unwrapErr());
-
-                auto modMetadata = ModMetadataImpl::createInvalidMetadata(
-                    entry.path().filename().string(),
-                    res.unwrapErr(),
-                    LoadProblem::Type::InvalidFile
-                );
-                modQueue.push_back(modMetadata);
-                continue;
-            }
-            auto modMetadata = res.unwrap();
+            auto modMetadata = ModMetadataImpl::createFromGeodeFileWithFallback(entry.path());
 
             log::debug("id: {}", modMetadata.getID());
             log::debug("version: {}", modMetadata.getVersion());
@@ -335,7 +329,7 @@ void Loader::Impl::queueMods(std::vector<ModMetadata>& modQueue) {
                 log::error("Failed to queue: a mod with the same ID is already queued");
 
                 auto modMetadata = ModMetadataImpl::createInvalidMetadata(
-                    entry.path().filename().string(),
+                    entry.path(),
                     "A mod with the same ID is already present.",
                     LoadProblem::Type::Duplicate
                 );
@@ -508,7 +502,8 @@ void Loader::Impl::loadModGraph(Mod* node, bool early) {
     }
     else {
         auto nest = log::saveNest();
-        std::thread([=, this]() {
+
+        async::runtime().spawnBlocking<void>([=, this]() {
             thread::setName("Mod Unzip");
             log::loadNest(nest);
             auto res = unzipFunction();
@@ -529,7 +524,7 @@ void Loader::Impl::loadModGraph(Mod* node, bool early) {
                 loadFunction();
                 log::loadNest(prevNest);
             });
-        }).detach();
+        });
     }
 }
 
@@ -847,6 +842,9 @@ void Loader::Impl::continueRefreshModGraph() {
             this->continueRefreshModGraph();
         });
     }
+    else {
+        GameEvent(GameEventType::ModsLoaded).send();
+    }
 }
 
 std::vector<LoadProblem> Loader::Impl::getProblems() const {
@@ -1000,7 +998,7 @@ bool Loader::Impl::loadHooks() {
 
 void Loader::Impl::queueInMainThread(ScheduledFunction&& func) {
     std::lock_guard<std::mutex> lock(m_mainThreadMutex);
-    m_mainThreadQueue.push_back(std::forward<ScheduledFunction>(func));
+    m_mainThreadQueue.push_back(std::move(func));
 }
 
 void Loader::Impl::executeMainThreadQueue() {
