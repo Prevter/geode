@@ -144,20 +144,35 @@ std::vector<StackFrame> CrashContext::getStacktrace() {
                 function = "";
             }
 
+            bool found = false;
+
             if (image) {
                 auto baseAddress = image->address;
                 if (base::get() == (uintptr_t)baseAddress) {
                     // find closest function start
-                    // TODO: figure out why getFunctionStarts() offsets are wrong
-                    std::string_view name = crashlog::lookupClosestFunction(offset);
-                    if (!name.empty()) {
-                        function = name;
+                    auto const& funcs = getFunctionStarts();
+                    auto iter = std::upper_bound(funcs.begin(), funcs.end(), offset);
+                    if (iter != funcs.begin()) {
+                        --iter;
+                        auto funcOffset = *iter;
+                        auto funcName = crashlog::lookupFunctionByOffset(funcOffset);
+                        frame.offset = offset - funcOffset;
+
+                        if (funcName.empty()) {
+                            frame.symbol = fmt::format("{} | sub_{:x}", offset, funcOffset);
+                        } else {
+                            frame.symbol = fmt::format("{} | {}", offset, funcName);
+                        }
+
+                        found = true;
                     }
                 }
             }
 
-            frame.symbol = std::move(function);
-            frame.offset = offset;
+            if (!found) {
+                frame.symbol = std::move(function);
+                frame.offset = offset;
+            }
         }
 
         frames.push_back(std::move(frame));
