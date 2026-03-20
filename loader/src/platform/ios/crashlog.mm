@@ -148,6 +148,8 @@ std::vector<StackFrame> CrashContext::getStacktrace() {
 
             if (image) {
                 auto baseAddress = image->address;
+                uintptr_t offset = address - (uintptr_t)baseAddress;
+
                 if (base::get() == (uintptr_t)baseAddress) {
                     // find closest function start
                     auto const& funcs = getFunctionStarts();
@@ -159,9 +161,9 @@ std::vector<StackFrame> CrashContext::getStacktrace() {
                         frame.offset = offset - funcOffset;
 
                         if (funcName.empty()) {
-                            frame.symbol = fmt::format("{} | sub_{:x}", offset, funcOffset);
+                            frame.symbol = fmt::format("sub_{:x}", funcOffset);
                         } else {
-                            frame.symbol = fmt::format("{} | {}", offset, funcName);
+                            frame.symbol = funcName;
                         }
 
                         found = true;
